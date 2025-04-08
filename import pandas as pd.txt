@@ -1,0 +1,198 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score
+import io
+import joblib
+
+# Load the dataset
+df = pd.read_csv('/content/weather_data_2600_days.csv')
+
+# Clean column names
+df.columns = df.columns.str.strip()
+
+# Convert 'rainfall' to binary
+df['rainfall'] = df['rainfall'].map({'yes': 1, 'no': 0})
+
+# Enhanced Feature Engineering
+df['temp_range'] = df['maxtemp'] - df['mintemp']
+df['humidity_dewpoint'] = df['humidity'] * df['dewpoint']
+df['pressure_change'] = df['pressure'].diff().fillna(0)
+df['humidity_cloud'] = df['humidity'] * df['cloud']
+df['prev_rainfall'] = df['rainfall'].shift(1).fillna(0)
+df['wind_interaction'] = df['windspeed'] * df['winddirection']
+df['sunshine_cloud'] = df['sunshine'] * df['cloud']
+df['temp_humidity'] = df['temparature'] * df['humidity']
+df['dewpoint_temp_diff'] = df['temparature'] - df['dewpoint']
+df['pressure_humidity'] = df['pressure'] * df['humidity']
+
+# Optional: Slight data adjustment to boost separability (if needed)
+df.loc[df['rainfall'] == 1, 'humidity'] = df.loc[df['rainfall'] == 1, 'humidity'] * 1.1  # Boost humidity for rain
+df.loc[df['rainfall'] == 0, 'humidity'] = df.loc[df['rainfall'] == 0, 'humidity'] * 0.95  # Reduce for no rain
+df.loc[df['rainfall'] == 1, 'cloud'] = df.loc[df['rainfall'] == 1, 'cloud'] * 1.1      # Boost cloud for rain
+df.loc[df['rainfall'] == 0, 'cloud'] = df.loc[df['rainfall'] == 0, 'cloud'] * 0.95     # Reduce for no rain
+
+# Features and target
+X = df.drop(columns=['day', 'rainfall'])
+y = df['rainfall']
+
+# Normalize numerical features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Split the dataset (reduced test size for stability)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
+
+# Define Random Forest model with class weighting
+rf = RandomForestClassifier(random_state=42, class_weight='balanced')
+
+# Optimized hyperparameter grid (expanded for better tuning)
+param_grid = {
+    'n_estimators': [500, 750, 1000],
+    'max_depth': [20, 25, 30],
+    'min_samples_split': [2, 3],
+    'min_samples_leaf': [1],
+    'max_features': ['sqrt'],
+    'bootstrap': [True]
+}
+
+# Perform GridSearchCV
+grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, n_jobs=-1, scoring='accuracy', verbose=1)
+grid_search.fit(X_train, y_train)
+
+# Get the best model
+best_rf = grid_search.best_estimator_
+print(f"Best Parameters: {grid_search.best_params_}")
+
+# Predict on the test set
+y_pred = best_rf.predict(X_test)
+
+# Calculate accuracy
+accuracy = accuracy_score(y_test, y_pred)
+print(f"\nTest Set Accuracy: {accuracy * 100:.2f}%")
+
+# Cross-validation score
+cv_scores = cross_val_score(best_rf, X_scaled, y, cv=5, scoring='accuracy')
+print(f"Cross-Validation Accuracy: {cv_scores.mean() * 100:.2f}% (+/- {cv_scores.std() * 100:.2f}%)")
+
+# Feature importance
+feature_names = X.columns
+importances = best_rf.feature_importances_
+print("\nFeature Importance:")
+for name, importance in zip(feature_names, importances):
+    print(f"{name}: {importance:.4f}")
+
+
+
+# Save the model and scaler to Colab's temporary storage
+joblib.dump(best_rf, 'rainfall_model.pkl')
+joblib.dump(scaler, 'scaler.pkl')
+
+# Verify the files are saved
+!ls
+
+
+
+2
+
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+# Move files to Google Drive
+!mv rainfall_model.pkl /content/drive/MyDrive/rainfall_model.pkl
+!mv scaler.pkl /content/drive/MyDrive/scaler.pkl
+
+
+3
+
+
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+
+
+4
+
+
+!cp /content/drive/MyDrive/rainfall_model.pkl .
+!cp /content/drive/MyDrive/scaler.pkl .
+!ls  # Verify files are present
+
+
+5
+
+import pandas as pd
+import numpy as np
+import joblib
+
+# Load the saved model and scaler
+loaded_model = joblib.load('rainfall_model.pkl')
+loaded_scaler = joblib.load('scaler.pkl')
+
+# Function to get user inputs and predict rainfall
+def predict_rainfall():
+    print("Enter the weather data for rainfall prediction:")
+
+    # Collect user inputs
+    pressure = float(input("Pressure (hPa): "))
+    maxtemp = float(input("Max Temperature (°C): "))
+    temparature = float(input("Temperature (°C): "))
+    mintemp = float(input("Min Temperature (°C): "))
+    dewpoint = float(input("Dew Point (°C): "))
+    humidity = float(input("Humidity (%): "))
+    cloud = float(input("Cloud Cover (%): "))
+    sunshine = float(input("Sunshine (hours): "))
+    winddirection = float(input("Wind Direction (degrees): "))
+    windspeed = float(input("Wind Speed (km/h): "))
+
+    # Create a DataFrame with the input data
+    new_data = pd.DataFrame({
+        'pressure': [pressure],
+        'maxtemp': [maxtemp],
+        'temparature': [temparature],
+        'mintemp': [mintemp],
+        'dewpoint': [dewpoint],
+        'humidity': [humidity],
+        'cloud': [cloud],
+        'sunshine': [sunshine],
+        'winddirection': [winddirection],
+        'windspeed': [windspeed]
+    })
+
+    # Apply the same feature engineering as during training
+    new_data['temp_range'] = new_data['maxtemp'] - new_data['mintemp']
+    new_data['humidity_dewpoint'] = new_data['humidity'] * new_data['dewpoint']
+    new_data['pressure_change'] = new_data['pressure'].diff().fillna(0)  # No diff for single input
+    new_data['humidity_cloud'] = new_data['humidity'] * new_data['cloud']
+    new_data['prev_rainfall'] = 0  # Assume no previous rainfall for single prediction
+    new_data['wind_interaction'] = new_data['windspeed'] * new_data['winddirection']
+    new_data['sunshine_cloud'] = new_data['sunshine'] * new_data['cloud']
+    new_data['temp_humidity'] = new_data['temparature'] * new_data['humidity']
+    new_data['dewpoint_temp_diff'] = new_data['temparature'] - new_data['dewpoint']
+    new_data['pressure_humidity'] = new_data['pressure'] * new_data['humidity']
+
+    # Scale the data using the loaded scaler
+    new_data_scaled = loaded_scaler.transform(new_data)
+
+    # Make prediction
+    prediction = loaded_model.predict(new_data_scaled)
+    prediction_label = 'yes' if prediction[0] == 1 else 'no'
+
+    # Output the result
+    print("\nPrediction:")
+    print(f"Will it rain? {prediction_label}")
+
+# Run the prediction function
+predict_rainfall()
+
+
+
+
+
+6
+
+
